@@ -5,6 +5,7 @@ const target = typeof window !== 'undefined'
     : {}
 const devtoolHook = target.__VUE_DEVTOOLS_GLOBAL_HOOK__
 
+// 在 window 中挂了一个 event emitter 的 hook，用事件机制来联动
 export default function devtoolPlugin (store) {
   if (!devtoolHook) return
 

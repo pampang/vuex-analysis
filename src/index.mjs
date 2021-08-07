@@ -12,6 +12,7 @@ const {
   createLogger
 } = Vuex
 
+// mjs 不支持 export default 吗？
 export {
   Vuex as default,
   Store,

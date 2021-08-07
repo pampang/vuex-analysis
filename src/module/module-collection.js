@@ -1,7 +1,20 @@
 import Module from './module'
 import { assert, forEachValue } from '../util'
 
+/**
+ * ModuleCollection 实例中包含字段：
+ * root，module 的根实例
+ */
+
+/**
+ * Module 实例中包含字段：
+ * runtime
+ * state
+ * _rawModule
+ * _children，存储父子关系的重点
+ */
 export default class ModuleCollection {
+  // rawRootModule 包含 state、getter、action、mutation 等定义
   constructor (rawRootModule) {
     // register root module (Vuex.Store options)
     this.register([], rawRootModule, false)
@@ -25,11 +38,14 @@ export default class ModuleCollection {
     update([], this.root, rawRootModule)
   }
 
+  // 用一个数组来记录当前的访问路径 path
+  // rawModule 包含 state、getter、action、mutation 等定义
   register (path, rawModule, runtime = true) {
     if (__DEV__) {
       assertRawModule(path, rawModule)
     }
 
+    // 针对 module 做初始化
     const newModule = new Module(rawModule, runtime)
     if (path.length === 0) {
       this.root = newModule
@@ -126,6 +142,7 @@ const assertTypes = {
   actions: objectAssert
 }
 
+// 通过断言来校验字段的正确性
 function assertRawModule (path, rawModule) {
   Object.keys(assertTypes).forEach(key => {
     if (!rawModule[key]) return

@@ -1,11 +1,14 @@
 import applyMixin from './mixin'
 import devtoolPlugin from './plugins/devtool'
+// Module 收集器
 import ModuleCollection from './module/module-collection'
 import { forEachValue, isObject, isPromise, assert, partial } from './util'
 
 let Vue // bind on install
 
 export class Store {
+  // options 可以理解为，各模块的注册合集，包含 state、getter、action、mutation 等定义
+  // 如 examples/chat/store/index.js
   constructor (options = {}) {
     // Auto install if it is not done yet and `window` has `Vue`.
     // To allow users to avoid auto-installation in some cases,
@@ -14,12 +17,18 @@ export class Store {
       install(window.Vue)
     }
 
+    // FIXME: 第一次跑进细节中
+    // 这种断言很优雅。有点像是一个 rule-engine。
     if (__DEV__) {
       assert(Vue, `must call Vue.use(Vuex) before creating a store instance.`)
       assert(typeof Promise !== 'undefined', `vuex requires a Promise polyfill in this browser.`)
       assert(this instanceof Store, `store must be called with the new operator.`)
     }
 
+    /**
+     * 赋值区域
+     * 关注 _modules、_watcherVM
+     */
     const {
       plugins = [],
       strict = false
@@ -31,12 +40,15 @@ export class Store {
     this._actionSubscribers = []
     this._mutations = Object.create(null)
     this._wrappedGetters = Object.create(null)
+    // TODO: 重点。数据都是从这里去提取的。存储了 module 的根实例，以及通过 parent 字段，关联了 module 的父子关系。
     this._modules = new ModuleCollection(options)
     this._modulesNamespaceMap = Object.create(null)
     this._subscribers = []
+    // 与 vue 深度绑定的原因：使用了 vue 实例作为 watcher VM。
     this._watcherVM = new Vue()
     this._makeLocalGettersCache = Object.create(null)
 
+    // WHY: 为了让 dispatch、commit 方法可以在不带 . 运算符也能正常运行
     // bind commit and dispatch to self
     const store = this
     const { dispatch, commit } = this
@@ -52,15 +64,27 @@ export class Store {
 
     const state = this._modules.root.state
 
+    // TODO: 关键。vuex 是如何初始化各个 store 模块的？
+    // 从 root module 开始，一步步将子 module 以及里面的 mutataion 定义处理好
+    // 这里的 this._modules 是一个重点内容。
     // init root module.
     // this also recursively registers all sub-modules
     // and collects all module getters inside this._wrappedGetters
     installModule(this, state, [], this._modules.root)
 
+    // FIXME: 什么是 storeVM？负责响应式的东东
     // initialize the store vm, which is responsible for the reactivity
     // (also registers _wrappedGetters as computed properties)
     resetStoreVM(this, state)
 
+
+    /**
+     * 插件初始化
+     * vuex 的插件机制，做的很简单。
+     * 在初始化的时候，把 store 实例传入，允许他们通过 subscribe 和 subscribeAction 的方式，
+     * 对整个数据流进行监听、处理。
+     * 但挺巧妙的
+     */
     // apply plugins
     plugins.forEach(plugin => plugin(this))
 
@@ -71,6 +95,7 @@ export class Store {
   }
 
   get state () {
+    // 把 state 藏在 vm 的 data 之中
     return this._vm._data.$$state
   }
 
@@ -80,8 +105,10 @@ export class Store {
     }
   }
 
+  // 变更 state 的唯一入口
   commit (_type, _payload, _options) {
     // check object-style commit
+    // 当 commit 的事务是用 object 来传入时，解析它
     const {
       type,
       payload,
@@ -89,6 +116,7 @@ export class Store {
     } = unifyObjectStyle(_type, _payload, _options)
 
     const mutation = { type, payload }
+    // 这里的数据结构设计，很优雅。
     const entry = this._mutations[type]
     if (!entry) {
       if (__DEV__) {
@@ -96,13 +124,18 @@ export class Store {
       }
       return
     }
+
+    // 执行关联的 mutations
+    // 用 _withCommit 来锁住 commit 的状态
     this._withCommit(() => {
       entry.forEach(function commitIterator (handler) {
         handler(payload)
       })
     })
 
+    // subscribe 是怎么进行的
     this._subscribers
+      // FIXME: 用 slice 来做数组的浅复制，有点意思。
       .slice() // shallow copy to prevent iterator invalidation if subscriber synchronously calls unsubscribe
       .forEach(sub => sub(mutation, this.state))
 
@@ -117,6 +150,8 @@ export class Store {
     }
   }
 
+  // dispatch 一个 action。
+  // action 一定是 promise 结构。
   dispatch (_type, _payload) {
     // check object-style dispatch
     const {
@@ -178,10 +213,13 @@ export class Store {
     })
   }
 
+  // 订阅 store 的 mutation
+  // handler 会在每个 mutation 完成后调用，接收 mutation 和经过 mutation 后的状态作为参数：
   subscribe (fn, options) {
     return genericSubscribe(fn, this._subscribers, options)
   }
 
+  // 订阅 store 的 action
   subscribeAction (fn, options) {
     const subs = typeof fn === 'function' ? { before: fn } : fn
     return genericSubscribe(subs, this._actionSubscribers, options)
@@ -244,6 +282,9 @@ export class Store {
     resetStore(this, true)
   }
 
+  // 这种模式也太巧妙了吧。
+  // fn 一定是同步的，所以即使触发多个 _withCommit，依然要按顺序执行。此时 commiting 的状态不会变更。
+  // _withCommit 应该会频繁触发，而且不是连续的。
   _withCommit (fn) {
     const committing = this._committing
     this._committing = true
@@ -278,6 +319,9 @@ function resetStore (store, hot) {
   resetStoreVM(store, state, hot)
 }
 
+// 重置 store 的 VM？
+// _vm 是在哪里声明的
+// 这里似乎是对 getter 做的处理，实现 getter 的延迟执行，类似于 vue 中的 computed
 function resetStoreVM (store, state, hot) {
   const oldVm = store._vm
 
@@ -328,6 +372,7 @@ function resetStoreVM (store, state, hot) {
   }
 }
 
+// 安装各个 module
 function installModule (store, rootState, path, module, hot) {
   const isRoot = !path.length
   const namespace = store._modules.getNamespace(path)
@@ -342,6 +387,8 @@ function installModule (store, rootState, path, module, hot) {
 
   // set state
   if (!isRoot && !hot) {
+    debugger
+    // path.slice(0, -1) 是把最后一个字符去掉
     const parentState = getNestedState(rootState, path.slice(0, -1))
     const moduleName = path[path.length - 1]
     store._withCommit(() => {
@@ -352,28 +399,33 @@ function installModule (store, rootState, path, module, hot) {
           )
         }
       }
+      // 用 Vue.set 来设定 state
       Vue.set(parentState, moduleName, module.state)
     })
   }
 
   const local = module.context = makeLocalContext(store, namespace, path)
 
+  // 注册 mutation
   module.forEachMutation((mutation, key) => {
     const namespacedType = namespace + key
     registerMutation(store, namespacedType, mutation, local)
   })
 
+  // 注册 action
   module.forEachAction((action, key) => {
     const type = action.root ? key : namespace + key
     const handler = action.handler || action
     registerAction(store, type, handler, local)
   })
 
+  // 注册 getter
   module.forEachGetter((getter, key) => {
     const namespacedType = namespace + key
     registerGetter(store, namespacedType, getter, local)
   })
 
+  // 注册子模块
   module.forEachChild((child, key) => {
     installModule(store, rootState, path.concat(key), child, hot)
   })
@@ -462,12 +514,15 @@ function makeLocalGetters (store, namespace) {
 }
 
 function registerMutation (store, type, handler, local) {
+  // 把每一个 mutation 存放到 store._mutataions 字段中
   const entry = store._mutations[type] || (store._mutations[type] = [])
+  // 存放了一个闭包，来保存 sotre、local 等参数，静待 payload 的到来，即可完成执行。
   entry.push(function wrappedMutationHandler (payload) {
     handler.call(store, local.state, payload)
   })
 }
 
+// action 一定是一个 promise
 function registerAction (store, type, handler, local) {
   const entry = store._actions[type] || (store._actions[type] = [])
   entry.push(function wrappedActionHandler (payload) {
@@ -522,6 +577,7 @@ function getNestedState (state, path) {
   return path.reduce((state, key) => state[key], state)
 }
 
+// 转换 object 类型的入参
 function unifyObjectStyle (type, payload, options) {
   if (isObject(type) && type.type) {
     options = payload
@@ -536,6 +592,7 @@ function unifyObjectStyle (type, payload, options) {
   return { type, payload, options }
 }
 
+// 用 _Vue 来持久化 vue 对象的实例，这样就能知道是否重复安装了。
 export function install (_Vue) {
   if (Vue && _Vue === Vue) {
     if (__DEV__) {

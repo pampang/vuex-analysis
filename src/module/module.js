@@ -10,6 +10,10 @@ export default class Module {
     this._rawModule = rawModule
     const rawState = rawModule.state
 
+    // 在这里，并不需要把 state 变成 reactive，因为根本没必要。
+    // 单项数据流，就是不希望 state 定义成双向绑定的。
+    // 此外，在声明到 vue 的组件之后，state 就变成了 reactive 的了。
+
     // Store the origin module's state
     this.state = (typeof rawState === 'function' ? rawState() : rawState) || {}
   }
@@ -26,6 +30,7 @@ export default class Module {
     delete this._children[key]
   }
 
+  // 根据 path，自顶向下查询
   getChild (key) {
     return this._children[key]
   }
